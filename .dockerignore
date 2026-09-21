@@ -1,0 +1,15 @@
+.git
+.gitignore
+
+# Never bake the interviewer material into an image.
+.interviewer
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+
+frontend/node_modules
+frontend/dist

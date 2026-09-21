@@ -1,0 +1,13 @@
+# Interviewer-only material. Never commit this to the candidate repository.
+.interviewer/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+
+node_modules/
+frontend/dist/
+.DS_Store

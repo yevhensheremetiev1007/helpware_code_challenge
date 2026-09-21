@@ -1,0 +1,133 @@
+name: vandelay-rubric
+
+x-api-env: &api-env
+  DATABASE_URL: postgresql+psycopg2://rubric:rubric@postgres:5432/rubric
+  DB_POOL_SIZE: "${DB_POOL_SIZE:-20}"
+  DB_MAX_OVERFLOW: "0"
+  DB_POOL_TIMEOUT: "30"
+  MODEL_ENDPOINT: http://stub-model:9000
+  MODEL_ID: anthropic.claude-3-5-sonnet-20241022-v2:0
+  MODEL_READ_TIMEOUT: "30"
+  SQS_QUEUE_URL: http://localstack:4566/000000000000/rubric-scoring
+  SQS_DLQ_URL: http://localstack:4566/000000000000/rubric-scoring-dlq
+  AWS_ENDPOINT_URL: http://localstack:4566
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    # 8 API workers x pool_size 20 can ask for 160 connections. The default of
+    # 100 would make the pool fail with "too many clients" instead of the
+    # timeout the service actually hits in production.
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      POSTGRES_USER: rubric
+      POSTGRES_PASSWORD: rubric
+      POSTGRES_DB: rubric
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rubric"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  localstack:
+    image: localstack/localstack:3.8
+    environment:
+      SERVICES: sqs
+      DEBUG: "0"
+      # Path-style queue URLs, so the URLs in rubric/config.py resolve from
+      # inside a container.
+      SQS_ENDPOINT_STRATEGY: path
+    ports:
+      - "4566:4566"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  stub-model:
+    build:
+      context: .
+      dockerfile: stub_model/Dockerfile
+    environment:
+      STUB_RPM: "${STUB_RPM:-40}"
+      STUB_LATENCY_MIN: "${STUB_LATENCY_MIN:-2.0}"
+      STUB_LATENCY_MAX: "${STUB_LATENCY_MAX:-12.0}"
+      STUB_TIMEOUT_RATE: "${STUB_TIMEOUT_RATE:-0.04}"
+    ports:
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/_stub/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    environment:
+      <<: *api-env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  bootstrap-queues:
+    image: amazon/aws-cli:2.17.0
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name rubric-scoring-dlq &&
+       aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name rubric-scoring"
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  api-1: &api
+    build: .
+    environment:
+      <<: *api-env
+      INSTANCE_NAME: api-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      stub-model:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  api-2:
+    <<: *api
+    environment:
+      <<: *api-env
+      INSTANCE_NAME: api-2
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - api-1
+      - api-2
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: ["sh", "-c", "npm install && npm run dev -- --host 0.0.0.0"]
+    environment:
+      VITE_API_BASE: http://localhost:8080
+    ports:
+      - "5173:5173"
+    depends_on:
+      - nginx
