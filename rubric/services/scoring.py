@@ -6,6 +6,7 @@ the model, and writes the score.
 
 import uuid
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from rubric.adapters import bedrock
@@ -38,6 +39,12 @@ def score_conversation_sync(
     if version is None:
         raise ScoringError(f"rubric {rubric_id} not found")
 
+    existing = repositories.get_score_for_conversation_version(
+        db, tenant_id, conversation_id, version.id
+    )
+    if existing is not None:
+        return existing
+
     prompt = prompts.build_scoring_prompt(conversation, version)
 
     print("calling bedrock")
@@ -46,15 +53,25 @@ def score_conversation_sync(
 
     parsed = parse_model_response(response)
 
-    score = repositories.create_score(
-        db,
-        tenant_id=tenant_id,
-        conversation_id=conversation_id,
-        rubric_version_id=version.id,
-        total=parsed["total"],
-        model_id=settings.model_id,
-        prompt_hash=prompts.prompt_hash(prompt),
-    )
+    try:
+        score = repositories.create_score(
+            db,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            rubric_version_id=version.id,
+            total=parsed["total"],
+            model_id=settings.model_id,
+            prompt_hash=prompts.prompt_hash(prompt),
+        )
+    except IntegrityError:
+        db.rollback()
+        winner = repositories.get_score_for_conversation_version(
+            db, tenant_id, conversation_id, version.id
+        )
+        if winner is None:
+            raise
+        return winner
+
     repositories.write_category_scores(db, score, version, parsed)
 
     scores_created_total.inc()

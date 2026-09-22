@@ -122,6 +122,14 @@ class ScoringJob(Base):
 
 class Score(Base):
     __tablename__ = "scores"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "conversation_id",
+            "rubric_version_id",
+            name="uq_scores_tenant_conversation_version",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=_uuid)
     tenant_id: Mapped[uuid.UUID] = mapped_column(

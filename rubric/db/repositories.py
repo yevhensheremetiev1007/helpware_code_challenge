@@ -61,6 +61,22 @@ def get_category(db: Session, category_id: uuid.UUID) -> RubricCategory | None:
     return db.get(RubricCategory, category_id)
 
 
+def get_score_for_conversation_version(
+    db: Session,
+    tenant_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    rubric_version_id: uuid.UUID,
+) -> Score | None:
+    """Return the authoritative score for this conversation × rubric version, if any."""
+    return db.scalar(
+        select(Score).where(
+            Score.tenant_id == tenant_id,
+            Score.conversation_id == conversation_id,
+            Score.rubric_version_id == rubric_version_id,
+        )
+    )
+
+
 def create_score(
     db: Session,
     tenant_id: uuid.UUID,

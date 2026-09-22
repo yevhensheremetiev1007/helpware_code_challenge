@@ -21,12 +21,9 @@ version produce one authoritative score, however many times it is submitted --
 and say in FINDINGS.md what you changed and why.
 """
 
-import pytest
-
 from rubric.db import repositories
 
 
-@pytest.mark.xfail(strict=True, reason="VAN-4417: resubmitting writes a second score")
 def test_resubmitting_a_conversation_does_not_create_a_second_score(
     client, auth, db, tenant, conversation, fake_model
 ):
@@ -49,7 +46,6 @@ def test_resubmitting_a_conversation_does_not_create_a_second_score(
     )
 
 
-@pytest.mark.xfail(strict=True, reason="VAN-4417: resubmitting calls the model again")
 def test_resubmitting_a_conversation_does_not_call_the_model_again(
     client, auth, conversation, fake_model
 ):
